@@ -1,0 +1,19 @@
+[project]
+name = "trios"
+version = "0.1.0"
+authors = [
+    { name = "Toshihiro Kamiya", email = "kamiya@mbj.nifty.com" }
+]
+description = "A falling-block game using triomino pieces."
+readme = "README.md"
+license = { file = "LICENSE.txt" }
+requires-python = ">=3.12"
+dependencies = [
+    "pygame",
+]
+
+[project.scripts]
+trios = "trios:main"
+
+[project.urls]
+repository = "https://github.com/tos-kamiya/trios"
