@@ -2,9 +2,11 @@
 """
 TRIOS - A Triomino Falling-Block Game
 
-This module implements a Tetris-like game using triomino pieces with Pygame.
-It includes features such as increasing falling speed, stages based on the number of lines cleared,
-a preview of the next two pieces, pause/resume functionality, and a stage border.
+TRIOS is a falling-block puzzle game featuring triomino pieces (three connected squares)
+that offers a unique twist on the classic Tetris formula. Pieces fall on an 8×22 grid
+(with the top 2 rows hidden), and players clear lines to progress through stages. The game
+includes a preview of the next two pieces, dynamic scoring with combo multipliers, and
+increasing falling speed.
 
 Author: Toshihiro Kamiya (kamiya@mbj.nifty.com)
 """
@@ -12,7 +14,7 @@ Author: Toshihiro Kamiya (kamiya@mbj.nifty.com)
 import pygame
 import random
 import sys
-from typing import List, Tuple, Optional
+from typing import List, Optional, Tuple
 
 # --- Constants ---
 BLOCK_SIZE: int = 30
@@ -30,9 +32,9 @@ FPS: int = 60
 
 # Preview area constants
 PREVIEW_MARGIN: int = 20
-PREVIEW_BOX_WIDTH: int = 200  # Width of the preview box
+PREVIEW_BOX_WIDTH: int = 200   # Width of preview boxes
 PREVIEW_BOX_HEIGHT: int = 100
-PREVIEW_EXTRA: int = 50       # Additional margin on the right
+PREVIEW_EXTRA: int = 50        # Additional margin on the right
 
 # Extended window width to accommodate the preview area
 WINDOW_WIDTH_EXTENDED: int = WINDOW_WIDTH + PREVIEW_MARGIN * 2 + PREVIEW_BOX_WIDTH + PREVIEW_EXTRA
@@ -43,7 +45,7 @@ MIN_FALL_DELAY: int = 100      # Minimum falling delay (ms)
 
 def get_initial_fall_delay(stage: int) -> int:
     """
-    Calculate the initial falling delay based on the stage.
+    Calculate the initial falling delay based on the current stage.
 
     Args:
         stage (int): The current stage number.
@@ -57,32 +59,33 @@ def get_initial_fall_delay(stage: int) -> int:
 STAGE_CLEAR_FACTOR: int = 10
 
 # --- Color Constants ---
-BG_COLOR: Tuple[int, int, int] = (240, 240, 240)          # Background: light gray
-GRID_LINE_COLOR: Tuple[int, int, int] = (210, 210, 210)     # Grid lines: very light gray
-PIECE_BORDER_COLOR: Tuple[int, int, int] = (60, 60, 60)     # Piece borders: dark gray
-TEXT_COLOR: Tuple[int, int, int] = (60, 60, 60)             # Text: dark gray
-STAGE_BORDER_COLOR: Tuple[int, int, int] = (0, 0, 0)        # Field border: black
+BG_COLOR: Tuple[int, int, int] = (250, 250, 250)          # Background
+GRID_LINE_COLOR: Tuple[int, int, int] = (200, 200, 200)     # Grid lines
+PIECE_BORDER_COLOR: Tuple[int, int, int] = (60, 60, 60)     # Piece borders
+TEXT_COLOR: Tuple[int, int, int] = (60, 60, 60)             # Text color
+STAGE_BORDER_COLOR: Tuple[int, int, int] = (0, 0, 0)        # Field border
+GAP_FILL_COLOR: Tuple[int, int, int] = (160, 160, 160)      # Gap fill color
 
-# Colors for pieces
-CYAN: Tuple[int, int, int] = (0, 255, 255)
-MAGENTA: Tuple[int, int, int] = (255, 0, 255)
-ORANGE: Tuple[int, int, int] = (255, 165, 0)
-GREEN: Tuple[int, int, int] = (0, 255, 0)
-BLUE: Tuple[int, int, int] = (0, 0, 255)
-YELLOW: Tuple[int, int, int] = (255, 255, 0)
+# --- Pastel Piece Colors ---
+PASTEL_CYAN: Tuple[int, int, int] = (100, 240, 255)
+PASTEL_MAGENTA: Tuple[int, int, int] = (255, 100, 150)
+PASTEL_ORANGE: Tuple[int, int, int] = (255, 160, 60)
+PASTEL_GREEN: Tuple[int, int, int] = (100, 255, 100)
+PASTEL_BLUE: Tuple[int, int, int] = (70, 130, 180)
+PASTEL_YELLOW: Tuple[int, int, int] = (255, 230, 0)
 
 # --- Triomino Shape Definitions ---
-# Each shape is defined as (name, relative block positions, color).
-# Relative positions are defined with respect to the pivot (0,0).
+# Each shape is defined as (name, [relative positions], color).
+# The relative positions are defined with respect to the pivot (0,0).
 shapes: List[Tuple[str, List[Tuple[int, int]], Tuple[int, int, int]]] = [
-    ("I",       [(-1, 0), (0, 0), (1, 0)], CYAN),
-    ("slash",   [(-1, -1), (0, 0), (1, 1)], MAGENTA),
-    ("L",       [(0, -1), (0, 0), (1, 0)], ORANGE),
-    ("small_r", [(-1, 0), (0, 0), (1, 1)], GREEN),
-    ("mirror_r",[ (1, 0), (0, 0), (-1, 1)], BLUE),
-    ("v",       [(-1, 0), (1, 0), (0, 1)], YELLOW)
+    ("I",       [(-1, 0), (0, 0), (1, 0)], PASTEL_CYAN),
+    ("slash",   [(-1, -1), (0, 0), (1, 1)], PASTEL_MAGENTA),
+    ("L",       [(0, -1), (0, 0), (1, 0)], PASTEL_ORANGE),
+    ("small_r", [(-1, 0), (0, 0), (1, 1)], PASTEL_GREEN),
+    ("mirror_r",[ (1, 0), (0, 0), (-1, 1)], PASTEL_BLUE),
+    ("v",       [(-1, 0), (1, 0), (0, 1)], PASTEL_YELLOW)
 ]
-# Weighting for piece appearance: "slash" and "v" have weight 1; others have weight 3.
+# Weighting for appearance: "slash" and "v" get weight 1; others 3.
 shape_weights: List[int] = [3, 1, 3, 3, 3, 1]
 
 # --- Piece Class ---
@@ -99,7 +102,7 @@ class Piece:
     """
     def __init__(self, shape: Tuple[str, List[Tuple[int, int]], Tuple[int, int, int]], grid_x: int, grid_y: int) -> None:
         self.name: str = shape[0]
-        self.blocks: List[Tuple[int, int]] = shape[1][:]  # Copy of relative block positions
+        self.blocks: List[Tuple[int, int]] = shape[1][:]
         self.color: Tuple[int, int, int] = shape[2]
         self.x: int = grid_x
         self.y: int = grid_y
@@ -115,17 +118,16 @@ class Piece:
 
     def rotate(self) -> List[Tuple[int, int]]:
         """
-        Get the new relative block positions after a 90-degree clockwise rotation.
+        Compute the new relative block positions after a 90° clockwise rotation.
 
         Returns:
             List[Tuple[int, int]]: The new relative positions.
         """
-        new_blocks = [(by, -bx) for (bx, by) in self.blocks]
-        return new_blocks
+        return [(by, -bx) for (bx, by) in self.blocks]
 
     def apply_rotation(self, new_blocks: List[Tuple[int, int]]) -> None:
         """
-        Update the piece's blocks with new relative positions after rotation.
+        Update the piece's block positions after rotation.
 
         Args:
             new_blocks (List[Tuple[int, int]]): The new relative positions.
@@ -135,26 +137,26 @@ class Piece:
 # --- Grid Functions ---
 def create_grid() -> List[List[Optional[Tuple[int, int, int]]]]:
     """
-    Create and initialize the game grid.
+    Initialize the game grid.
 
     Returns:
-        List[List[Optional[Tuple[int, int, int]]]]: A 2D list representing the grid.
+        List[List[Optional[Tuple[int, int, int]]]]: A 2D grid where each cell is either a color tuple or None.
     """
     return [[None for _ in range(GRID_WIDTH)] for _ in range(GRID_HEIGHT)]
 
-def valid_position(piece: Piece, grid: List[List[Optional[Tuple[int, int, int]]]], 
+def valid_position(piece: Piece, grid: List[List[Optional[Tuple[int, int, int]]]],
                    block_positions: Optional[List[Tuple[int, int]]] = None) -> bool:
     """
-    Check if the piece's blocks are within the grid and in empty cells.
+    Check if the piece's block positions are valid (inside the grid and on empty cells).
     Cells with negative y-values (above the visible area) are ignored.
 
     Args:
         piece (Piece): The piece to check.
         grid (List[List[Optional[Tuple[int, int, int]]]]): The game grid.
-        block_positions (Optional[List[Tuple[int, int]]]): Optional list of positions to check.
+        block_positions (Optional[List[Tuple[int, int]]]): Optional positions to check.
 
     Returns:
-        bool: True if the position is valid, False otherwise.
+        bool: True if valid, False otherwise.
     """
     if block_positions is None:
         block_positions = piece.get_block_positions()
@@ -169,7 +171,7 @@ def valid_position(piece: Piece, grid: List[List[Optional[Tuple[int, int, int]]]
 
 def add_piece_to_grid(piece: Piece, grid: List[List[Optional[Tuple[int, int, int]]]]) -> None:
     """
-    Place the piece onto the grid permanently.
+    Fix the piece onto the grid.
 
     Args:
         piece (Piece): The piece to add.
@@ -187,7 +189,7 @@ def clear_full_lines(grid: List[List[Optional[Tuple[int, int, int]]]]) -> Tuple[
         grid (List[List[Optional[Tuple[int, int, int]]]]): The current grid.
 
     Returns:
-        Tuple[List[List[Optional[Tuple[int, int, int]]]], int]: A tuple containing the new grid and the number of cleared lines.
+        Tuple[List[List[Optional[Tuple[int, int, int]]]], int]: A tuple with the new grid and the number of cleared lines.
     """
     new_grid = [row for row in grid if None in row]
     num_cleared = len(grid) - len(new_grid)
@@ -198,23 +200,38 @@ def clear_full_lines(grid: List[List[Optional[Tuple[int, int, int]]]]) -> Tuple[
 # --- Drawing Functions ---
 def draw_grid(surface: pygame.Surface, grid: List[List[Optional[Tuple[int, int, int]]]]) -> None:
     """
-    Draw the game grid and the placed blocks.
+    Draw the game grid along with fixed blocks. For each column, determine the topmost fixed block 
+    (ignoring falling pieces), and then fill every empty cell below that position with GAP_FILL_COLOR 
+    to indicate a gap.
 
     Args:
         surface (pygame.Surface): The drawing surface.
         grid (List[List[Optional[Tuple[int, int, int]]]]): The game grid.
     """
+    # For each column, compute the topmost fixed cell (if any) in the visible area.
+    top_filled_by_column: List[Optional[int]] = [None] * GRID_WIDTH
+    for x in range(GRID_WIDTH):
+        for y in range(VISIBLE_ROW_OFFSET, GRID_HEIGHT):
+            if grid[y][x] is not None:
+                top_filled_by_column[x] = y
+                break
+
+    # Draw each cell in the visible area.
     for y in range(VISIBLE_ROW_OFFSET, GRID_HEIGHT):
         for x in range(GRID_WIDTH):
-            # Calculate drawing rectangle (shifted upward by VISIBLE_ROW_OFFSET rows)
             rect = pygame.Rect(x * BLOCK_SIZE, (y - VISIBLE_ROW_OFFSET) * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE)
             if grid[y][x] is not None:
+                # Draw the fixed block.
                 pygame.draw.rect(surface, grid[y][x], rect)
-            pygame.draw.rect(surface, GRID_LINE_COLOR, rect, 1)  # Draw thin grid lines
+            else:
+                # If there is a fixed block in this column and this row is below (or equal to) that topmost fixed block, fill the gap.
+                if top_filled_by_column[x] is not None and y >= top_filled_by_column[x]:
+                    pygame.draw.rect(surface, GAP_FILL_COLOR, rect)
+            pygame.draw.rect(surface, GRID_LINE_COLOR, rect, 1)
 
 def draw_piece(surface: pygame.Surface, piece: Piece) -> None:
     """
-    Draw the active piece on the surface.
+    Draw the active (falling) piece on the surface.
 
     Args:
         surface (pygame.Surface): The drawing surface.
@@ -224,11 +241,11 @@ def draw_piece(surface: pygame.Surface, piece: Piece) -> None:
         if y >= VISIBLE_ROW_OFFSET:
             rect = pygame.Rect(x * BLOCK_SIZE, (y - VISIBLE_ROW_OFFSET) * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE)
             pygame.draw.rect(surface, piece.color, rect)
-            pygame.draw.rect(surface, PIECE_BORDER_COLOR, rect, 1)  # Draw piece borders
+            pygame.draw.rect(surface, PIECE_BORDER_COLOR, rect, 1)
 
 def draw_stage_border(surface: pygame.Surface) -> None:
     """
-    Draw the border around the visible field.
+    Draw a border around the visible game field.
 
     Args:
         surface (pygame.Surface): The drawing surface.
@@ -238,7 +255,7 @@ def draw_stage_border(surface: pygame.Surface) -> None:
 
 def draw_preview_box(surface: pygame.Surface, piece: Piece, box_rect: pygame.Rect) -> None:
     """
-    Draw a preview of a piece within a given box.
+    Draw a preview of a piece within a specified rectangle.
 
     Args:
         surface (pygame.Surface): The drawing surface.
@@ -256,22 +273,22 @@ def draw_preview_box(surface: pygame.Surface, piece: Piece, box_rect: pygame.Rec
 
 def draw_previews(surface: pygame.Surface, next_piece: Piece, next_next_piece: Piece) -> None:
     """
-    Draw the next two pieces in preview boxes on the right side.
+    Draw the next two pieces in preview boxes on the right side of the window.
 
     Args:
         surface (pygame.Surface): The drawing surface.
         next_piece (Piece): The next piece.
-        next_next_piece (Piece): The piece after the next.
+        next_next_piece (Piece): The piece following the next.
     """
     preview_x = WINDOW_WIDTH + PREVIEW_MARGIN
 
-    # Draw upper preview box with next_next_piece
+    # Upper preview box shows next_next_piece.
     box1_rect = pygame.Rect(preview_x, PREVIEW_MARGIN, PREVIEW_BOX_WIDTH, PREVIEW_BOX_HEIGHT)
     draw_preview_box(surface, next_next_piece, box1_rect)
-    # Draw lower preview box with next_piece
+    # Lower preview box shows next_piece.
     box2_rect = pygame.Rect(preview_x, PREVIEW_MARGIN + PREVIEW_BOX_HEIGHT + PREVIEW_MARGIN, PREVIEW_BOX_WIDTH, PREVIEW_BOX_HEIGHT)
     draw_preview_box(surface, next_piece, box2_rect)
-    # Draw outer border around preview area
+    # Draw an outer border around the preview area.
     box_rect = pygame.Rect(preview_x, PREVIEW_MARGIN, PREVIEW_BOX_WIDTH, PREVIEW_BOX_HEIGHT * 2 + PREVIEW_MARGIN)
     pygame.draw.rect(surface, STAGE_BORDER_COLOR, box_rect, 2)
 
@@ -283,7 +300,7 @@ def draw_info(surface: pygame.Surface, score: int, stage: int, lines_to_clear: i
         surface (pygame.Surface): The drawing surface.
         score (int): The current score.
         stage (int): The current stage.
-        lines_to_clear (int): The number of lines remaining to clear for the stage.
+        lines_to_clear (int): The number of lines remaining to clear for stage advancement.
     """
     font = pygame.font.SysFont(None, 36)
     text_score = font.render("Score: " + str(score), True, TEXT_COLOR)
@@ -340,7 +357,7 @@ def main() -> None:
     current_piece: Piece = next_piece
     current_piece.x = GRID_WIDTH // 2
     current_piece.y = 1
-    # Update preview: next_piece becomes next_next_piece, and generate a new next_next_piece
+    # Update preview: next_piece becomes next_next_piece, then generate a new next_next_piece
     next_piece = next_next_piece
     next_next_piece = Piece(random.choices(shapes, weights=shape_weights, k=1)[0], GRID_WIDTH // 2, 1)
 
@@ -350,21 +367,17 @@ def main() -> None:
     while running:
         clock.tick(FPS)
         for event in pygame.event.get():
-            # Handle quit events
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
-                # Toggle pause with 'P'
                 if event.key == pygame.K_p:
                     paused = not paused
-                # Quit with 'Q' or Escape
                 elif event.key == pygame.K_q or event.key == pygame.K_ESCAPE:
                     running = False
 
                 if paused:
-                    continue  # Ignore other controls when paused
+                    continue
 
-                # Process movement and rotation controls
                 if event.key == pygame.K_LEFT:
                     new_positions = [(x - 1, y) for (x, y) in current_piece.get_block_positions()]
                     if valid_position(current_piece, grid, new_positions):
@@ -383,7 +396,6 @@ def main() -> None:
                     if valid_position(current_piece, grid, rotated_positions):
                         current_piece.apply_rotation(new_blocks)
                 elif event.key == pygame.K_SPACE:
-                    # Hard drop: move piece down until it hits something
                     while valid_position(current_piece, grid):
                         current_piece.y += 1
                     current_piece.y -= 1
@@ -396,20 +408,17 @@ def main() -> None:
                     else:
                         combo_multiplier = 1
 
-                    # Gradually decrease the fall delay (by 2ms per piece)
                     fall_delay = max(MIN_FALL_DELAY, fall_delay - 2)
                     pygame.time.set_timer(fall_event, fall_delay)
 
-                    # Stage clear check
                     if lines_cleared_stage >= stage_threshold:
                         grid = create_grid()  # Clear the field
-                        lines_cleared_stage -= stage_threshold  # Carry over extra lines
+                        lines_cleared_stage -= stage_threshold
                         stage += 1
                         stage_threshold = stage * STAGE_CLEAR_FACTOR
                         fall_delay = get_initial_fall_delay(stage)
                         pygame.time.set_timer(fall_event, fall_delay)
 
-                    # Set next piece
                     current_piece = next_piece
                     current_piece.x = GRID_WIDTH // 2
                     current_piece.y = 1
@@ -454,13 +463,11 @@ def main() -> None:
                         print("Game Over. Final Score:", score)
                         running = False
 
-        # Drawing phase
         screen.fill(BG_COLOR)
         draw_grid(screen, grid)
         draw_piece(screen, current_piece)
-        draw_stage_border(screen)  # Draw field border in black
+        draw_stage_border(screen)
         draw_previews(screen, next_piece, next_next_piece)
-        # Calculate remaining lines for stage clear
         lines_remaining = stage_threshold - lines_cleared_stage
         draw_info(screen, score, stage, lines_remaining)
         if paused:
