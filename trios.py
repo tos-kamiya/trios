@@ -65,6 +65,7 @@ PIECE_BORDER_COLOR: Tuple[int, int, int] = (60, 60, 60)     # Piece borders
 TEXT_COLOR: Tuple[int, int, int] = (60, 60, 60)             # Text color
 STAGE_BORDER_COLOR: Tuple[int, int, int] = (0, 0, 0)        # Field border
 GAP_FILL_COLOR: Tuple[int, int, int] = (160, 160, 160)      # Gap fill color
+FALLING_COLUMN_COLOR: Tuple[int, int, int] = (240, 240, 240)
 
 # --- Pastel Piece Colors ---
 PASTEL_CYAN: Tuple[int, int, int] = (100, 240, 255)
@@ -198,17 +199,22 @@ def clear_full_lines(grid: List[List[Optional[Tuple[int, int, int]]]]) -> Tuple[
     return new_grid, num_cleared
 
 # --- Drawing Functions ---
-def draw_grid(surface: pygame.Surface, grid: List[List[Optional[Tuple[int, int, int]]]]) -> None:
+def draw_grid(surface: pygame.Surface, grid: List[List[Optional[Tuple[int, int, int]]]], 
+              falling_columns: Optional[set[int]] = None) -> None:
     """
-    Draw the game grid along with fixed blocks. For each column, determine the topmost fixed block 
-    (ignoring falling pieces), and then fill every empty cell below that position with GAP_FILL_COLOR 
-    to indicate a gap.
+    Draw the game grid along with fixed blocks.
+    For each column, determine the topmost fixed cell (ignoring cells above VISIBLE_ROW_OFFSET).
+    Then, for each empty cell:
+      - If the cell is below (or at) the topmost fixed cell in that column, fill it with GAP_FILL_COLOR.
+      - Otherwise, if the column is flagged as containing the falling piece, fill it with FALLING_COLUMN_COLOR.
+    Finally, draw the grid lines.
 
     Args:
         surface (pygame.Surface): The drawing surface.
         grid (List[List[Optional[Tuple[int, int, int]]]]): The game grid.
+        falling_columns (Optional[set[int]]): A set of column indices that contain the falling piece.
     """
-    # For each column, compute the topmost fixed cell (if any) in the visible area.
+    # Determine the topmost fixed cell in each column (only within the visible area)
     top_filled_by_column: List[Optional[int]] = [None] * GRID_WIDTH
     for x in range(GRID_WIDTH):
         for y in range(VISIBLE_ROW_OFFSET, GRID_HEIGHT):
@@ -216,17 +222,18 @@ def draw_grid(surface: pygame.Surface, grid: List[List[Optional[Tuple[int, int, 
                 top_filled_by_column[x] = y
                 break
 
-    # Draw each cell in the visible area.
     for y in range(VISIBLE_ROW_OFFSET, GRID_HEIGHT):
         for x in range(GRID_WIDTH):
             rect = pygame.Rect(x * BLOCK_SIZE, (y - VISIBLE_ROW_OFFSET) * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE)
             if grid[y][x] is not None:
-                # Draw the fixed block.
                 pygame.draw.rect(surface, grid[y][x], rect)
             else:
-                # If there is a fixed block in this column and this row is below (or equal to) that topmost fixed block, fill the gap.
+                # If there is a fixed block in this column and this cell is below or equal to that row, fill with GAP_FILL_COLOR.
                 if top_filled_by_column[x] is not None and y >= top_filled_by_column[x]:
                     pygame.draw.rect(surface, GAP_FILL_COLOR, rect)
+                # Otherwise, if the column is flagged as containing the falling piece, fill with FALLING_COLUMN_COLOR.
+                elif falling_columns is not None and x in falling_columns:
+                    pygame.draw.rect(surface, FALLING_COLUMN_COLOR, rect)
             pygame.draw.rect(surface, GRID_LINE_COLOR, rect, 1)
 
 def draw_piece(surface: pygame.Surface, piece: Piece) -> None:
@@ -467,7 +474,8 @@ def main() -> None:
                         running = False
 
         screen.fill(BG_COLOR)
-        draw_grid(screen, grid)
+        falling_columns: set[int] = { x for (x, _) in current_piece.get_block_positions() }
+        draw_grid(screen, grid, falling_columns)
         draw_piece(screen, current_piece)
         draw_stage_border(screen)
         draw_previews(screen, next_piece, next_next_piece)
