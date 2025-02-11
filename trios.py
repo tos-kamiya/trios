@@ -64,7 +64,7 @@ GRID_LINE_COLOR: Tuple[int, int, int] = (200, 200, 200)     # Grid lines
 PIECE_BORDER_COLOR: Tuple[int, int, int] = (60, 60, 60)     # Piece borders
 TEXT_COLOR: Tuple[int, int, int] = (60, 60, 60)             # Text color
 STAGE_BORDER_COLOR: Tuple[int, int, int] = (0, 0, 0)        # Field border
-GAP_FILL_COLOR: Tuple[int, int, int] = (160, 160, 160)      # Gap fill color
+GAP_FILL_COLOR: Tuple[int, int, int] = (90, 90, 90)         # Gap fill color
 FALLING_COLUMN_COLOR: Tuple[int, int, int] = (240, 240, 240)
 
 # --- Pastel Piece Colors ---
