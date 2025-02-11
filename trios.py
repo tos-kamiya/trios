@@ -71,7 +71,7 @@ PASTEL_CYAN: Tuple[int, int, int] = (100, 240, 255)
 PASTEL_MAGENTA: Tuple[int, int, int] = (255, 100, 150)
 PASTEL_ORANGE: Tuple[int, int, int] = (255, 160, 60)
 PASTEL_GREEN: Tuple[int, int, int] = (100, 255, 100)
-PASTEL_BLUE: Tuple[int, int, int] = (70, 130, 180)
+PASTEL_BLUE: Tuple[int, int, int] = (70, 150, 230)
 PASTEL_YELLOW: Tuple[int, int, int] = (255, 230, 0)
 
 # --- Triomino Shape Definitions ---
@@ -85,8 +85,8 @@ shapes: List[Tuple[str, List[Tuple[int, int]], Tuple[int, int, int]]] = [
     ("mirror_r",[ (1, 0), (0, 0), (-1, 1)], PASTEL_BLUE),
     ("v",       [(-1, 0), (1, 0), (0, 1)], PASTEL_YELLOW)
 ]
-# Weighting for appearance: "slash" and "v" get weight 1; others 3.
-shape_weights: List[int] = [3, 1, 3, 3, 3, 1]
+# Weighting for appearance: "slash" and "v" get lower weight
+base_shape_weights: List[int] = [15, 5, 15, 15, 15, 5]
 
 # --- Piece Class ---
 class Piece:
@@ -351,15 +351,16 @@ def main() -> None:
     combo_multiplier: int = 1
 
     # Generate the first two preview pieces
-    next_piece: Piece = Piece(random.choices(shapes, weights=shape_weights, k=1)[0], GRID_WIDTH // 2, 1)
-    next_next_piece: Piece = Piece(random.choices(shapes, weights=shape_weights, k=1)[0], GRID_WIDTH // 2, 1)
+    effective_weights: List[int] = [max(w - (stage - 1), 5) for w in base_shape_weights]
+    next_piece: Piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
+    next_next_piece: Piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
     # Set current piece from next_piece
     current_piece: Piece = next_piece
     current_piece.x = GRID_WIDTH // 2
     current_piece.y = 1
     # Update preview: next_piece becomes next_next_piece, then generate a new next_next_piece
     next_piece = next_next_piece
-    next_next_piece = Piece(random.choices(shapes, weights=shape_weights, k=1)[0], GRID_WIDTH // 2, 1)
+    next_next_piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
 
     paused: bool = False  # Pause flag
 
@@ -422,8 +423,9 @@ def main() -> None:
                     current_piece = next_piece
                     current_piece.x = GRID_WIDTH // 2
                     current_piece.y = 1
+                    effective_weights: List[int] = [max(w - (stage - 1), 5) for w in base_shape_weights]
                     next_piece = next_next_piece
-                    next_next_piece = Piece(random.choices(shapes, weights=shape_weights, k=1)[0], GRID_WIDTH // 2, 1)
+                    next_next_piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
                     if not valid_position(current_piece, grid):
                         print("Game Over. Final Score:", score)
                         running = False
@@ -457,8 +459,9 @@ def main() -> None:
                     current_piece = next_piece
                     current_piece.x = GRID_WIDTH // 2
                     current_piece.y = 1
+                    effective_weights: List[int] = [max(w - (stage - 1), 5) for w in base_shape_weights]
                     next_piece = next_next_piece
-                    next_next_piece = Piece(random.choices(shapes, weights=shape_weights, k=1)[0], GRID_WIDTH // 2, 1)
+                    next_next_piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
                     if not valid_position(current_piece, grid):
                         print("Game Over. Final Score:", score)
                         running = False
