@@ -319,15 +319,18 @@ def draw_info(surface: pygame.Surface, score: int, stage: int, lines_to_clear: i
     surface.blit(text_stage, (text_x, text_y + 40))
     surface.blit(text_remaining, (text_x, text_y + 80))
 
-def draw_pause_message(surface: pygame.Surface) -> None:
+def draw_pause_message(surface: pygame.Surface, game_over: bool = False) -> None:
     """
-    Draw a "Paused" message in the center of the screen.
+    Draw a message at the center of the screen.
+    If game_over is True, display "Game Over", otherwise display "Paused".
 
     Args:
         surface (pygame.Surface): The drawing surface.
+        game_over (bool): Whether the game is over.
     """
-    font = pygame.font.SysFont(None, 72)
-    text = font.render("Paused", True, TEXT_COLOR)
+    font = pygame.font.SysFont(None, 60)
+    msg = "Game Over" if game_over else "Paused"
+    text = font.render(msg, True, TEXT_COLOR)
     rect = text.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2))
     surface.blit(text, rect)
 
@@ -370,7 +373,7 @@ def main() -> None:
     next_next_piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
 
     paused: bool = False  # Pause flag
-
+    game_over: bool = False  # Game over flag
     running: bool = True
     while running:
         clock.tick(FPS)
@@ -435,7 +438,8 @@ def main() -> None:
                     next_next_piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
                     if not valid_position(current_piece, grid):
                         print("Game Over. Final Score:", score)
-                        running = False
+                        game_over = True
+                        paused = True
 
             elif event.type == fall_event and not paused:
                 new_y = current_piece.y + 1
@@ -471,7 +475,8 @@ def main() -> None:
                     next_next_piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
                     if not valid_position(current_piece, grid):
                         print("Game Over. Final Score:", score)
-                        running = False
+                        game_over = True
+                        paused = True
 
         screen.fill(BG_COLOR)
         falling_columns: set[int] = { x for (x, _) in current_piece.get_block_positions() }
@@ -482,7 +487,7 @@ def main() -> None:
         lines_remaining = stage_threshold - lines_cleared_stage
         draw_info(screen, score, stage, lines_remaining)
         if paused:
-            draw_pause_message(screen)
+            draw_pause_message(screen, game_over)
         pygame.display.flip()
 
     pygame.quit()
