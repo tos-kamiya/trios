@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>TRIOS</title>
+  <style>
+    body {
+      background-color: #fafafa;
+      text-align: center;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+    canvas {
+      background-color: #fafafa;
+      display: block;
+      margin: 20px auto;
+      border: 1px solid #000;
+    }
+  </style>
+</head>
+<body>
+  <!-- Canvas size: extended width to accommodate preview area -->
+  <canvas id="gameCanvas" width="530" height="600"></canvas>
+
+  <script>
+    "use strict";
+    // --- Constants ---
+    const BLOCK_SIZE = 30;
+    const GRID_WIDTH = 8;
+    const GRID_HEIGHT = 22;
+    const VISIBLE_ROW_OFFSET = 2; // Number of rows hidden at the top
+    const WINDOW_WIDTH = GRID_WIDTH * BLOCK_SIZE; // 240
+    const WINDOW_HEIGHT = (GRID_HEIGHT - VISIBLE_ROW_OFFSET) * BLOCK_SIZE; // 600
+
+    // Preview area constants
+    const PREVIEW_MARGIN = 20;
+    const PREVIEW_BOX_WIDTH = 200;
+    const PREVIEW_BOX_HEIGHT = 100;
+    const PREVIEW_EXTRA = 50; // Additional margin on the right
+    const WINDOW_WIDTH_EXTENDED = WINDOW_WIDTH + PREVIEW_MARGIN * 2 + PREVIEW_BOX_WIDTH + PREVIEW_EXTRA; // 530
+
+    const MIN_FALL_DELAY = 100;
+    // Calculate initial fall delay based on current stage
+    function getInitialFallDelay(stage) {
+      return Math.max(800 - (stage - 1) * 50, MIN_FALL_DELAY);
+    }
+    const STAGE_CLEAR_FACTOR = 10; // Stage 1: 10 lines, Stage 2: 20 lines, etc.
+
+    // --- Color Constants (CSS rgb strings) ---
+    const BG_COLOR = "rgb(250,250,250)";
+    const GRID_LINE_COLOR = "rgb(200,200,200)";
+    const PIECE_BORDER_COLOR = "rgb(60,60,60)";
+    const TEXT_COLOR = "rgb(60,60,60)";
+    const STAGE_BORDER_COLOR = "rgb(0,0,0)";
+    const GAP_FILL_COLOR = "rgb(90,90,90)";
+    const FALLING_COLUMN_COLOR = "rgb(240,240,240)";
+
+    const PASTEL_CYAN     = "rgb(100,240,255)";
+    const PASTEL_MAGENTA  = "rgb(255,100,150)";
+    const PASTEL_ORANGE   = "rgb(255,160,60)";
+    const PASTEL_GREEN    = "rgb(100,255,100)";
+    const PASTEL_BLUE     = "rgb(70,150,230)";
+    const PASTEL_YELLOW   = "rgb(255,230,0)";
+
+    // --- Triomino Shape Definitions ---
+    // Each shape is defined as an object with { name, blocks, color }.
+    // The blocks array contains relative positions with respect to the pivot (0,0).
+    const shapes = [
+      { name: "I",     blocks: [ [-1, 0], [0, 0], [1, 0] ], color: PASTEL_CYAN },
+      { name: "slash", blocks: [ [-1, -1], [0, 0], [1, 1] ], color: PASTEL_MAGENTA },
+      { name: "L",     blocks: [ [0, -1], [0, 0], [1, 0] ], color: PASTEL_ORANGE },
+      { name: "j",     blocks: [ [0, -1], [0, 0], [-1, 1] ], color: PASTEL_GREEN },
+      { name: "shi",   blocks: [ [0, -1], [0, 0], [1, 1] ], color: PASTEL_BLUE },
+      { name: "v",     blocks: [ [-1, 0], [1, 0], [0, 1] ], color: PASTEL_YELLOW }
+    ];
+    // Base weights for random selection (lower weight for "slash" and "v")
+    const base_shape_weights = [15, 5, 15, 15, 15, 5];
+
+    // --- Game State Enumeration ---
+    const GameState = {
+      RUNNING: 1,
+      PAUSED: 2,
+      STAGE_CLEAR: 3,
+      GAME_OVER: 4
+    };
+
+    // --- Piece Class ---
+    class Piece {
+      constructor(shape, gridX, gridY) {
+        this.name = shape.name;
+        // Copy the relative block positions
+        this.blocks = shape.blocks.map(b => [b[0], b[1]]);
+        this.color = shape.color;
+        this.x = gridX;
+        this.y = gridY;
+      }
+      // Get absolute grid positions of the blocks
+      getBlockPositions() {
+        return this.blocks.map(b => [this.x + b[0], this.y + b[1]]);
+      }
+      // Compute new relative positions after a 90° clockwise rotation
+      rotate() {
+        return this.blocks.map(b => [b[1], -b[0]]);
+      }
+      // Apply the rotated block positions
+      applyRotation(newBlocks) {
+        this.blocks = newBlocks;
+      }
+    }
+
+    // --- Grid Functions ---
+    function createGrid() {
+      let grid = [];
+      for (let y = 0; y < GRID_HEIGHT; y++) {
+        grid.push(new Array(GRID_WIDTH).fill(null));
+      }
+      return grid;
+    }
+    // Check if the piece's block positions are valid within the grid
+    function validPosition(piece, grid, blockPositions) {
+      if (blockPositions === undefined) {
+        blockPositions = piece.getBlockPositions();
+      }
+      for (let pos of blockPositions) {
+        let x = pos[0], y = pos[1];
+        if (x < 0 || x >= GRID_WIDTH) return false;
+        if (y >= GRID_HEIGHT) return false;
+        if (y >= 0 && grid[y][x] !== null) return false;
+      }
+      return true;
+    }
+    // Fix the piece onto the grid
+    function addPieceToGrid(piece, grid) {
+      for (let pos of piece.getBlockPositions()) {
+        let x = pos[0], y = pos[1];
+        if (y >= 0) {
+          grid[y][x] = piece.color;
+        }
+      }
+    }
+    // Clear full lines from the grid and return the new grid and number of cleared lines
+    function clearFullLines(grid) {
+      let newGrid = grid.filter(row => row.includes(null));
+      let numCleared = grid.length - newGrid.length;
+      for (let i = 0; i < numCleared; i++) {
+        newGrid.unshift(new Array(GRID_WIDTH).fill(null));
+      }
+      return { grid: newGrid, linesCleared: numCleared };
+    }
+
+    // --- Drawing Functions ---
+    function drawGrid(ctx, grid, fallingColumns) {
+      // Determine the first filled cell in each column (in the visible area)
+      let topFilledByColumn = new Array(GRID_WIDTH).fill(null);
+      for (let x = 0; x < GRID_WIDTH; x++) {
+        for (let y = VISIBLE_ROW_OFFSET; y < GRID_HEIGHT; y++) {
+          if (grid[y][x] !== null) {
+            topFilledByColumn[x] = y;
+            break;
+          }
+        }
+      }
+      for (let y = VISIBLE_ROW_OFFSET; y < GRID_HEIGHT; y++) {
+        for (let x = 0; x < GRID_WIDTH; x++) {
+          let rectX = x * BLOCK_SIZE;
+          let rectY = (y - VISIBLE_ROW_OFFSET) * BLOCK_SIZE;
+          if (grid[y][x] !== null) {
+            ctx.fillStyle = grid[y][x];
+            ctx.fillRect(rectX, rectY, BLOCK_SIZE, BLOCK_SIZE);
+          } else {
+            if (topFilledByColumn[x] !== null && y >= topFilledByColumn[x]) {
+              ctx.fillStyle = GAP_FILL_COLOR;
+              ctx.fillRect(rectX, rectY, BLOCK_SIZE, BLOCK_SIZE);
+            }
+            else if (fallingColumns && fallingColumns.has(x)) {
+              ctx.fillStyle = FALLING_COLUMN_COLOR;
+              ctx.fillRect(rectX, rectY, BLOCK_SIZE, BLOCK_SIZE);
+            }
+          }
+          ctx.strokeStyle = GRID_LINE_COLOR;
+          ctx.strokeRect(rectX, rectY, BLOCK_SIZE, BLOCK_SIZE);
+        }
+      }
+    }
+    function drawPiece(ctx, piece) {
+      let positions = piece.getBlockPositions();
+      for (let pos of positions) {
+        let x = pos[0], y = pos[1];
+        if (y >= VISIBLE_ROW_OFFSET) {
+          let rectX = x * BLOCK_SIZE;
+          let rectY = (y - VISIBLE_ROW_OFFSET) * BLOCK_SIZE;
+          ctx.fillStyle = piece.color;
+          ctx.fillRect(rectX, rectY, BLOCK_SIZE, BLOCK_SIZE);
+          ctx.strokeStyle = PIECE_BORDER_COLOR;
+          ctx.strokeRect(rectX, rectY, BLOCK_SIZE, BLOCK_SIZE);
+        }
+      }
+    }
+    function drawStageBorder(ctx) {
+      ctx.strokeStyle = STAGE_BORDER_COLOR;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(0, 0, GRID_WIDTH * BLOCK_SIZE, (GRID_HEIGHT - VISIBLE_ROW_OFFSET) * BLOCK_SIZE);
+      ctx.lineWidth = 1;
+    }
+    function drawPreviewBox(ctx, piece, boxRect) {
+      let centerX = boxRect.x + boxRect.width / 2;
+      let centerY = boxRect.y + boxRect.height / 2;
+      for (let b of piece.blocks) {
+        let blockX = centerX + b[0] * BLOCK_SIZE - BLOCK_SIZE / 2;
+        let blockY = centerY + b[1] * BLOCK_SIZE - BLOCK_SIZE / 2;
+        ctx.fillStyle = piece.color;
+        ctx.fillRect(blockX, blockY, BLOCK_SIZE, BLOCK_SIZE);
+        ctx.strokeStyle = PIECE_BORDER_COLOR;
+        ctx.strokeRect(blockX, blockY, BLOCK_SIZE, BLOCK_SIZE);
+      }
+    }
+    function drawPreviews(ctx, nextPiece, nextNextPiece) {
+      let previewX = WINDOW_WIDTH + PREVIEW_MARGIN;
+      let box1 = { x: previewX, y: PREVIEW_MARGIN, width: PREVIEW_BOX_WIDTH, height: PREVIEW_BOX_HEIGHT };
+      drawPreviewBox(ctx, nextNextPiece, box1);
+      let box2 = { x: previewX, y: PREVIEW_MARGIN + PREVIEW_BOX_HEIGHT + PREVIEW_MARGIN, width: PREVIEW_BOX_WIDTH, height: PREVIEW_BOX_HEIGHT };
+      drawPreviewBox(ctx, nextPiece, box2);
+      ctx.strokeStyle = STAGE_BORDER_COLOR;
+      ctx.strokeRect(previewX, PREVIEW_MARGIN, PREVIEW_BOX_WIDTH, PREVIEW_BOX_HEIGHT * 2 + PREVIEW_MARGIN);
+    }
+    // Draw game information (score, stage, lines remaining) with reduced font size (80% of original)
+    function drawInfo(ctx, score, stage, linesToClear) {
+      ctx.fillStyle = TEXT_COLOR;
+      ctx.font = "28px sans-serif"; // Reduced from 36px to 28px (~80%)
+      // Reset text alignment for info display
+      ctx.textAlign = "start";
+      // Increase vertical margin (extra 20px) so the info text is separated from the preview boxes
+      let textX = WINDOW_WIDTH + PREVIEW_MARGIN;
+      let textY = PREVIEW_MARGIN + 2 * (PREVIEW_BOX_HEIGHT + PREVIEW_MARGIN) + 20;
+      ctx.fillText("Score: " + score, textX, textY);
+      ctx.fillText("Stage: " + stage, textX, textY + 40 * 0.8);
+      ctx.fillText("Lines remaining: " + linesToClear, textX, textY + 80 * 0.8);
+    }
+    // Draw a centered multi-line pause or game over message with reduced font size
+    function drawPauseMessage(ctx, message = "Paused") {
+      let lines = message.split("\n");
+      ctx.fillStyle = TEXT_COLOR;
+      ctx.font = "34px sans-serif"; // Reduced from 42px to 34px (~80%)
+      ctx.textAlign = "center";
+      let lineHeight = 34; // Adjusted line height
+      let totalHeight = lineHeight * lines.length;
+      let startY = (WINDOW_HEIGHT - totalHeight) / 2;
+      for (let i = 0; i < lines.length; i++) {
+        let text = lines[i];
+        let x = WINDOW_WIDTH / 2;
+        let y = startY + i * lineHeight + lineHeight;
+        ctx.fillText(text, x, y);
+      }
+    }
+
+    // --- Weighted Random Selection ---
+    function weightedRandomChoice(arr, weights) {
+      let total = weights.reduce((a, b) => a + b, 0);
+      let r = Math.random() * total;
+      let cumulative = 0;
+      for (let i = 0; i < arr.length; i++) {
+        cumulative += weights[i];
+        if (r < cumulative) return arr[i];
+      }
+      return arr[arr.length - 1];
+    }
+    // Create a new random piece based on the current stage's effective weights
+    function newRandomPiece(stage) {
+      let effWeights = base_shape_weights.map(w => Math.max(w - (stage - 1), 5));
+      let shape = weightedRandomChoice(shapes, effWeights);
+      return new Piece(shape, Math.floor(GRID_WIDTH / 2), 1);
+    }
+
+    // --- Global Variables ---
+    let canvas, ctx;
+    let grid;
+    let stage;
+    let stageThreshold;
+    let linesClearedStage;
+    let fallDelay;
+    let lastFallTime;
+    let score;
+    let comboMultiplier;
+    let nextPiece, nextNextPiece, currentPiece;
+    let gameState;
+
+    // --- Key Input Handling ---
+    function handleKeyDown(e) {
+      // If game over, do nothing (prompt user to reload the page)
+      if (gameState === GameState.GAME_OVER) {
+        return;
+      }
+      if (gameState === GameState.PAUSED || gameState === GameState.STAGE_CLEAR) {
+        gameState = GameState.RUNNING;
+        return;
+      }
+      // RUNNING state key events
+      if (e.key === "p") {
+        gameState = GameState.PAUSED;
+        return;
+      }
+      if (e.key === "ArrowLeft") {
+        let newPositions = currentPiece.getBlockPositions().map(pos => [pos[0] - 1, pos[1]]);
+        if (validPosition(currentPiece, grid, newPositions)) {
+          currentPiece.x -= 1;
+        }
+      }
+      else if (e.key === "ArrowRight") {
+        let newPositions = currentPiece.getBlockPositions().map(pos => [pos[0] + 1, pos[1]]);
+        if (validPosition(currentPiece, grid, newPositions)) {
+          currentPiece.x += 1;
+        }
+      }
+      else if (e.key === "ArrowDown") {
+        let newPositions = currentPiece.getBlockPositions().map(pos => [pos[0], pos[1] + 1]);
+        if (validPosition(currentPiece, grid, newPositions)) {
+          currentPiece.y += 1;
+        }
+      }
+      else if (e.key === "ArrowUp") {
+        let newBlocks = currentPiece.rotate();
+        let rotatedPositions = newBlocks.map(b => [currentPiece.x + b[0], currentPiece.y + b[1]]);
+        if (validPosition(currentPiece, grid, rotatedPositions)) {
+          currentPiece.applyRotation(newBlocks);
+        }
+      }
+      else if (e.key === " ") { // Hard drop with space key
+        while (validPosition(currentPiece, grid)) {
+          currentPiece.y += 1;
+        }
+        currentPiece.y -= 1;
+        addPieceToGrid(currentPiece, grid);
+        let cleared = clearFullLines(grid);
+        grid = cleared.grid;
+        let linesCleared = cleared.linesCleared;
+        if (linesCleared > 0) {
+          score += (linesCleared * linesCleared) * comboMultiplier;
+          comboMultiplier *= 2;
+          linesClearedStage += linesCleared;
+        } else {
+          comboMultiplier = 1;
+        }
+        fallDelay = Math.max(MIN_FALL_DELAY, fallDelay - 2);
+        if (linesClearedStage >= stageThreshold) {
+          grid = createGrid();
+          linesClearedStage -= stageThreshold;
+          stage++;
+          stageThreshold = stage * STAGE_CLEAR_FACTOR;
+          fallDelay = getInitialFallDelay(stage);
+          gameState = GameState.STAGE_CLEAR;
+        }
+        currentPiece = nextPiece;
+        currentPiece.x = Math.floor(GRID_WIDTH / 2);
+        currentPiece.y = 1;
+        nextPiece = nextNextPiece;
+        nextNextPiece = newRandomPiece(stage);
+        if (!validPosition(currentPiece, grid)) {
+          console.log("Game Over. Final Score:", score);
+          gameState = GameState.GAME_OVER;
+        }
+        lastFallTime = performance.now();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+
+    // --- Main Game Loop ---
+    function mainLoop(timestamp) {
+      if (gameState === GameState.RUNNING) {
+        if (timestamp - lastFallTime >= fallDelay) {
+          // Piece falling logic
+          let newPositions = currentPiece.getBlockPositions().map(pos => [pos[0], pos[1] + 1]);
+          if (validPosition(currentPiece, grid, newPositions)) {
+            currentPiece.y += 1;
+          } else {
+            addPieceToGrid(currentPiece, grid);
+            let cleared = clearFullLines(grid);
+            grid = cleared.grid;
+            let linesCleared = cleared.linesCleared;
+            if (linesCleared > 0) {
+              score += (linesCleared * linesCleared) * comboMultiplier;
+              comboMultiplier *= 2;
+              linesClearedStage += linesCleared;
+            } else {
+              comboMultiplier = 1;
+            }
+            fallDelay = Math.max(MIN_FALL_DELAY, fallDelay - 2);
+            if (linesClearedStage >= stageThreshold) {
+              grid = createGrid();
+              linesClearedStage -= stageThreshold;
+              stage++;
+              stageThreshold = stage * STAGE_CLEAR_FACTOR;
+              fallDelay = getInitialFallDelay(stage);
+              gameState = GameState.STAGE_CLEAR;
+            }
+            currentPiece = nextPiece;
+            currentPiece.x = Math.floor(GRID_WIDTH / 2);
+            currentPiece.y = 1;
+            nextPiece = nextNextPiece;
+            nextNextPiece = newRandomPiece(stage);
+            if (!validPosition(currentPiece, grid)) {
+              console.log("Game Over. Final Score:", score);
+              gameState = GameState.GAME_OVER;
+            }
+          }
+          lastFallTime = timestamp;
+        }
+      }
+
+      // Drawing
+      ctx.fillStyle = BG_COLOR;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      // Determine columns where the current falling piece is present
+      let fallingColumns = new Set(currentPiece.getBlockPositions().map(pos => pos[0]));
+      drawGrid(ctx, grid, fallingColumns);
+      drawPiece(ctx, currentPiece);
+      drawStageBorder(ctx);
+      drawPreviews(ctx, nextPiece, nextNextPiece);
+      let linesRemaining = stageThreshold - linesClearedStage;
+      drawInfo(ctx, score, stage, linesRemaining);
+      if (gameState === GameState.PAUSED) {
+        drawPauseMessage(ctx, "Paused");
+      } else if (gameState === GameState.STAGE_CLEAR) {
+        drawPauseMessage(ctx, `Stage ${stage - 1} Clear!\nPress any key\nto continue.`);
+      } else if (gameState === GameState.GAME_OVER) {
+        drawPauseMessage(ctx, `Game Over.\nFinal Score: ${score}\nReload the page\nto play again.`);
+      }
+      requestAnimationFrame(mainLoop);
+    }
+
+    // --- Initialization ---
+    function init() {
+      canvas = document.getElementById("gameCanvas");
+      ctx = canvas.getContext("2d");
+      // Canvas size is set in HTML
+
+      grid = createGrid();
+      stage = 1;
+      stageThreshold = stage * STAGE_CLEAR_FACTOR;
+      linesClearedStage = 0;
+      fallDelay = getInitialFallDelay(stage);
+      score = 0;
+      comboMultiplier = 1;
+      // Generate initial preview pieces
+      nextPiece = newRandomPiece(stage);
+      nextNextPiece = newRandomPiece(stage);
+      currentPiece = nextPiece;
+      currentPiece.x = Math.floor(GRID_WIDTH / 2);
+      currentPiece.y = 1;
+      nextPiece = nextNextPiece;
+      nextNextPiece = newRandomPiece(stage);
+      gameState = GameState.RUNNING;
+      lastFallTime = performance.now();
+
+      requestAnimationFrame(mainLoop);
+    }
+    window.onload = init;
+  </script>
+
+  <div>
+    <p>TRIOS v0.4.3 <a href="https://github.com/tos-kamiya/trios/">→ Github page</a></p>
+  </div>
+</body>
+</html>

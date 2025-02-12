@@ -6,6 +6,8 @@
 
 TRIOS is a falling-block puzzle game that puts a unique spin on the classic Tetris formula. Instead of the familiar tetrominoes, TRIOS features triomino pieces -- each composed of three connected squares. This minimalistic design may seem sparse at first glance but offers a fresh and challenging twist on the genre. The game is played on an 8×20 grid, and despite its streamlined appearance, it includes dynamic scoring, stage progression, and an ever-increasing falling speed to keep you on your toes.
 
+You can also play TRIOS online. → https://www.toshihirokamiya.com/trios/
+
 ## Rules
 
 **Objective:** Clear horizontal lines by strategically rotating and positioning the triomino pieces.
