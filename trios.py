@@ -69,7 +69,7 @@ STAGE_BORDER_COLOR: Tuple[int, int, int] = (0, 0, 0)        # Field border
 GAP_FILL_COLOR: Tuple[int, int, int] = (90, 90, 90)         # Gap fill color
 FALLING_COLUMN_COLOR: Tuple[int, int, int] = (240, 240, 240)
 
-# --- Pastel Piece Colors ---
+# --- Pastel (Vivid) Piece Colors ---
 PASTEL_CYAN: Tuple[int, int, int] = (100, 240, 255)
 PASTEL_MAGENTA: Tuple[int, int, int] = (255, 100, 150)
 PASTEL_ORANGE: Tuple[int, int, int] = (255, 160, 60)
@@ -79,7 +79,7 @@ PASTEL_YELLOW: Tuple[int, int, int] = (255, 230, 0)
 
 # --- Triomino Shape Definitions ---
 # Each shape is defined as (name, [relative positions], color).
-# The relative positions are defined with respect to the pivot (0,0).
+# Relative positions are with respect to the pivot (0,0).
 shapes: List[Tuple[str, List[Tuple[int, int]], Tuple[int, int, int]]] = [
     ("I",       [(-1, 0), (0, 0), (1, 0)], PASTEL_CYAN),
     ("slash",   [(-1, -1), (0, 0), (1, 1)], PASTEL_MAGENTA),
@@ -88,7 +88,7 @@ shapes: List[Tuple[str, List[Tuple[int, int]], Tuple[int, int, int]]] = [
     ("shi",     [(0, -1), (0, 0), (1, 1)], PASTEL_BLUE),
     ("v",       [(-1, 0), (1, 0), (0, 1)], PASTEL_YELLOW)
 ]
-# Weighting for appearance: "slash" and "v" get lower weight
+# Base weights for appearance
 base_shape_weights: List[int] = [15, 5, 15, 15, 15, 5]
 
 # --- Piece Class ---
@@ -200,23 +200,49 @@ def clear_full_lines(grid: List[List[Optional[Tuple[int, int, int]]]]) -> Tuple[
         new_grid.insert(0, [None for _ in range(GRID_WIDTH)])
     return new_grid, num_cleared
 
+# --- Game State Enum ---
+class GameState(Enum):
+    RUNNING = 1       # Normal gameplay
+    PAUSED = 2        # Paused by player
+    STAGE_CLEAR = 3   # Stage clear pause (waiting for any key)
+    GAME_OVER = 4     # Game over state
+
+# --- Game Context Class ---
+class GameContext:
+    """
+    Holds all game state data.
+    """
+    def __init__(self) -> None:
+        self.grid: List[List[Optional[Tuple[int, int, int]]]] = create_grid()
+        self.stage: int = 1
+        self.stage_threshold: int = self.stage * STAGE_CLEAR_FACTOR
+        self.lines_cleared_stage: int = 0
+        self.fall_delay: int = get_initial_fall_delay(self.stage)
+        self.score: int = 0
+        self.combo_multiplier: int = 1
+        self.state: GameState = GameState.RUNNING
+        self.close_request: bool = False
+        # Initialize preview pieces using effective weights
+        effective_weights: List[int] = [max(w - (self.stage - 1), 5) for w in base_shape_weights]
+        self.next_piece: Piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
+        self.next_next_piece: Piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
+        self.current_piece: Piece = self.next_piece
+        self.current_piece.x = GRID_WIDTH // 2
+        self.current_piece.y = 1
+        self.next_piece = self.next_next_piece
+        self.next_next_piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
+
 # --- Drawing Functions ---
 def draw_grid(surface: pygame.Surface, grid: List[List[Optional[Tuple[int, int, int]]]], 
               falling_columns: Optional[set[int]] = None) -> None:
     """
     Draw the game grid along with fixed blocks.
-    For each column, determine the topmost fixed cell (ignoring cells above VISIBLE_ROW_OFFSET).
+    For each column, find the topmost fixed cell (within the visible area).
     Then, for each empty cell:
-      - If the cell is below (or at) the topmost fixed cell in that column, fill it with GAP_FILL_COLOR.
-      - Otherwise, if the column is flagged as containing the falling piece, fill it with FALLING_COLUMN_COLOR.
-    Finally, draw the grid lines.
-
-    Args:
-        surface (pygame.Surface): The drawing surface.
-        grid (List[List[Optional[Tuple[int, int, int]]]]): The game grid.
-        falling_columns (Optional[set[int]]): A set of column indices that contain the falling piece.
+      - If below (or equal to) that cell, fill with GAP_FILL_COLOR.
+      - Else if the column is in falling_columns, fill with FALLING_COLUMN_COLOR.
+    Draw grid lines over the cells.
     """
-    # Determine the topmost fixed cell in each column (only within the visible area)
     top_filled_by_column: List[Optional[int]] = [None] * GRID_WIDTH
     for x in range(GRID_WIDTH):
         for y in range(VISIBLE_ROW_OFFSET, GRID_HEIGHT):
@@ -230,18 +256,16 @@ def draw_grid(surface: pygame.Surface, grid: List[List[Optional[Tuple[int, int, 
             if grid[y][x] is not None:
                 pygame.draw.rect(surface, grid[y][x], rect)
             else:
-                # If there is a fixed block in this column and this cell is below or equal to that row, fill with GAP_FILL_COLOR.
                 if top_filled_by_column[x] is not None and y >= top_filled_by_column[x]:
                     pygame.draw.rect(surface, GAP_FILL_COLOR, rect)
-                # Otherwise, if the column is flagged as containing the falling piece, fill with FALLING_COLUMN_COLOR.
                 elif falling_columns is not None and x in falling_columns:
                     pygame.draw.rect(surface, FALLING_COLUMN_COLOR, rect)
             pygame.draw.rect(surface, GRID_LINE_COLOR, rect, 1)
 
 def draw_piece(surface: pygame.Surface, piece: Piece) -> None:
     """
-    Draw the active (falling) piece on the surface.
-
+    Draw the active (falling) piece.
+    
     Args:
         surface (pygame.Surface): The drawing surface.
         piece (Piece): The active piece.
@@ -255,7 +279,7 @@ def draw_piece(surface: pygame.Surface, piece: Piece) -> None:
 def draw_stage_border(surface: pygame.Surface) -> None:
     """
     Draw a border around the visible game field.
-
+    
     Args:
         surface (pygame.Surface): The drawing surface.
     """
@@ -265,11 +289,11 @@ def draw_stage_border(surface: pygame.Surface) -> None:
 def draw_preview_box(surface: pygame.Surface, piece: Piece, box_rect: pygame.Rect) -> None:
     """
     Draw a preview of a piece within a specified rectangle.
-
+    
     Args:
         surface (pygame.Surface): The drawing surface.
         piece (Piece): The piece to preview.
-        box_rect (pygame.Rect): The rectangle defining the preview area.
+        box_rect (pygame.Rect): The preview area.
     """
     center_x = box_rect.x + box_rect.width // 2
     center_y = box_rect.y + box_rect.height // 2
@@ -282,34 +306,30 @@ def draw_preview_box(surface: pygame.Surface, piece: Piece, box_rect: pygame.Rec
 
 def draw_previews(surface: pygame.Surface, next_piece: Piece, next_next_piece: Piece) -> None:
     """
-    Draw the next two pieces in preview boxes on the right side of the window.
-
+    Draw the next two pieces in preview boxes on the right side.
+    
     Args:
         surface (pygame.Surface): The drawing surface.
         next_piece (Piece): The next piece.
         next_next_piece (Piece): The piece following the next.
     """
     preview_x = WINDOW_WIDTH + PREVIEW_MARGIN
-
-    # Upper preview box shows next_next_piece.
     box1_rect = pygame.Rect(preview_x, PREVIEW_MARGIN, PREVIEW_BOX_WIDTH, PREVIEW_BOX_HEIGHT)
     draw_preview_box(surface, next_next_piece, box1_rect)
-    # Lower preview box shows next_piece.
     box2_rect = pygame.Rect(preview_x, PREVIEW_MARGIN + PREVIEW_BOX_HEIGHT + PREVIEW_MARGIN, PREVIEW_BOX_WIDTH, PREVIEW_BOX_HEIGHT)
     draw_preview_box(surface, next_piece, box2_rect)
-    # Draw an outer border around the preview area.
     box_rect = pygame.Rect(preview_x, PREVIEW_MARGIN, PREVIEW_BOX_WIDTH, PREVIEW_BOX_HEIGHT * 2 + PREVIEW_MARGIN)
     pygame.draw.rect(surface, STAGE_BORDER_COLOR, box_rect, 2)
 
 def draw_info(surface: pygame.Surface, score: int, stage: int, lines_to_clear: int) -> None:
     """
-    Draw the game information (score, stage, and lines remaining) on the right side.
-
+    Draw game information (score, stage, and lines remaining) on the right side.
+    
     Args:
         surface (pygame.Surface): The drawing surface.
         score (int): The current score.
         stage (int): The current stage.
-        lines_to_clear (int): The number of lines remaining to clear for stage advancement.
+        lines_to_clear (int): The number of lines remaining for stage advancement.
     """
     font = pygame.font.SysFont(None, 36)
     text_score = font.render("Score: " + str(score), True, TEXT_COLOR)
@@ -324,34 +344,204 @@ def draw_info(surface: pygame.Surface, score: int, stage: int, lines_to_clear: i
 def draw_pause_message(surface: pygame.Surface, message: str = "Paused") -> None:
     """
     Draw a multi-line message at the center of the screen.
-
+    
     Args:
         surface (pygame.Surface): The drawing surface.
-        message (str): The message to display. Newline characters ('\n') split the message into multiple lines.
+        message (str): The message to display (use '\n' for line breaks).
     """
     font = pygame.font.SysFont(None, 42)
     lines = message.split("\n")
-    
-    # Calculate the total height of all lines
     line_heights = [font.size(line)[1] for line in lines]
     total_height = sum(line_heights)
-    
-    # Start drawing vertically centered
     current_y = (WINDOW_HEIGHT - total_height) // 2
-    
     for i, line in enumerate(lines):
         text_surface = font.render(line, True, TEXT_COLOR)
         text_rect = text_surface.get_rect(center=(WINDOW_WIDTH // 2, current_y + line_heights[i] // 2))
         surface.blit(text_surface, text_rect)
         current_y += line_heights[i]
 
-class GameState(Enum):
-    RUNNING = 1       # Normal game play
-    PAUSED = 2        # Paused by the player (via P key or other key while paused)
-    STAGE_CLEAR = 3   # Game paused at stage clear (waiting for any key to resume)
-    GAME_OVER = 4     # Game over state (display final score, etc.)
+# --- Main Game Loop Functions ---
+class GameContext:
+    """
+    Encapsulates the overall game state.
+    """
+    def __init__(self) -> None:
+        self.grid: List[List[Optional[Tuple[int, int, int]]]] = create_grid()
+        self.stage: int = 1
+        self.stage_threshold: int = self.stage * STAGE_CLEAR_FACTOR
+        self.lines_cleared_stage: int = 0
+        self.fall_delay: int = get_initial_fall_delay(self.stage)
+        self.score: int = 0
+        self.combo_multiplier: int = 1
+        self.state: GameState = GameState.RUNNING
+        self.close_request: bool = False
+        effective_weights: List[int] = [max(w - (self.stage - 1), 5) for w in base_shape_weights]
+        self.next_piece: Piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
+        self.next_next_piece: Piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
+        self.current_piece: Piece = self.next_piece
+        self.current_piece.x = GRID_WIDTH // 2
+        self.current_piece.y = 1
+        self.next_piece = self.next_next_piece
+        self.next_next_piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
 
-# --- Main Game Loop ---
+def handle_events(ctx: GameContext, fall_event: int) -> None:
+    """
+    Process user events and update the game context accordingly.
+    
+    Args:
+        ctx (GameContext): The game context.
+        fall_event (int): The fall event ID.
+    """
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            ctx.close_request = True
+        elif event.type == pygame.KEYDOWN:
+            if event.key in (pygame.K_q, pygame.K_ESCAPE):
+                ctx.close_request = True
+                continue
+
+            # If game over, ignore all key inputs except for quit.
+            if ctx.state == GameState.GAME_OVER:
+                continue
+            # If paused or stage clear, any key resumes running.
+            elif ctx.state in (GameState.PAUSED, GameState.STAGE_CLEAR):
+                ctx.state = GameState.RUNNING
+                continue
+
+            # At this point, state must be RUNNING.
+            assert ctx.state == GameState.RUNNING
+
+            if event.key == pygame.K_p:
+                ctx.state = GameState.PAUSED
+                continue
+
+            if event.key == pygame.K_LEFT:
+                new_positions = [(x - 1, y) for (x, y) in ctx.current_piece.get_block_positions()]
+                if valid_position(ctx.current_piece, ctx.grid, new_positions):
+                    ctx.current_piece.x -= 1
+            elif event.key == pygame.K_RIGHT:
+                new_positions = [(x + 1, y) for (x, y) in ctx.current_piece.get_block_positions()]
+                if valid_position(ctx.current_piece, ctx.grid, new_positions):
+                    ctx.current_piece.x += 1
+            elif event.key == pygame.K_DOWN:
+                new_positions = [(x, y + 1) for (x, y) in ctx.current_piece.get_block_positions()]
+                if valid_position(ctx.current_piece, ctx.grid, new_positions):
+                    ctx.current_piece.y += 1
+            elif event.key == pygame.K_UP:
+                new_blocks = ctx.current_piece.rotate()
+                rotated_positions = [(ctx.current_piece.x + bx, ctx.current_piece.y + by) for (bx, by) in new_blocks]
+                if valid_position(ctx.current_piece, ctx.grid, rotated_positions):
+                    ctx.current_piece.apply_rotation(new_blocks)
+            elif event.key == pygame.K_SPACE:
+                # Hard drop
+                while valid_position(ctx.current_piece, ctx.grid):
+                    ctx.current_piece.y += 1
+                ctx.current_piece.y -= 1
+                add_piece_to_grid(ctx.current_piece, ctx.grid)
+                new_grid, lines_cleared = clear_full_lines(ctx.grid)
+                ctx.grid = new_grid
+                if lines_cleared > 0:
+                    ctx.score += (lines_cleared ** 2) * ctx.combo_multiplier
+                    ctx.combo_multiplier *= 2
+                    ctx.lines_cleared_stage += lines_cleared
+                else:
+                    ctx.combo_multiplier = 1
+
+                ctx.fall_delay = max(MIN_FALL_DELAY, ctx.fall_delay - 2)
+                pygame.time.set_timer(fall_event, ctx.fall_delay)
+
+                if ctx.lines_cleared_stage >= ctx.stage_threshold:
+                    ctx.grid = create_grid()  # Clear the field
+                    ctx.lines_cleared_stage -= ctx.stage_threshold
+                    ctx.stage += 1
+                    ctx.stage_threshold = ctx.stage * STAGE_CLEAR_FACTOR
+                    ctx.fall_delay = get_initial_fall_delay(ctx.stage)
+                    pygame.time.set_timer(fall_event, ctx.fall_delay)
+                    ctx.state = GameState.STAGE_CLEAR
+
+                # Set next piece
+                ctx.current_piece = ctx.next_piece
+                ctx.current_piece.x = GRID_WIDTH // 2
+                ctx.current_piece.y = 1
+                effective_weights: List[int] = [max(w - (ctx.stage - 1), 5) for w in base_shape_weights]
+                ctx.next_piece = ctx.next_next_piece
+                ctx.next_next_piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
+                if not valid_position(ctx.current_piece, ctx.grid):
+                    print("Game Over. Final Score:", ctx.score)
+                    ctx.state = GameState.GAME_OVER
+
+        elif event.type == fall_event and ctx.state == GameState.RUNNING:
+            update_fall(ctx, fall_event)
+
+def update_fall(ctx: GameContext, fall_event: int) -> None:
+    """
+    Process a fall event for the active piece.
+
+    Args:
+        ctx (GameContext): The game context.
+        fall_event (int): The fall event ID.
+    """
+    new_y = ctx.current_piece.y + 1
+    new_positions = [(x, y + 1) for (x, y) in ctx.current_piece.get_block_positions()]
+    if valid_position(ctx.current_piece, ctx.grid, new_positions):
+        ctx.current_piece.y = new_y
+    else:
+        add_piece_to_grid(ctx.current_piece, ctx.grid)
+        new_grid, lines_cleared = clear_full_lines(ctx.grid)
+        ctx.grid = new_grid
+        if lines_cleared > 0:
+            ctx.score += (lines_cleared ** 2) * ctx.combo_multiplier
+            ctx.combo_multiplier *= 2
+            ctx.lines_cleared_stage += lines_cleared
+        else:
+            ctx.combo_multiplier = 1
+
+        ctx.fall_delay = max(MIN_FALL_DELAY, ctx.fall_delay - 2)
+        pygame.time.set_timer(fall_event, ctx.fall_delay)
+
+        if ctx.lines_cleared_stage >= ctx.stage_threshold:
+            ctx.grid = create_grid()  # Clear the field on stage clear
+            ctx.lines_cleared_stage -= ctx.stage_threshold
+            ctx.stage += 1
+            ctx.stage_threshold = ctx.stage * STAGE_CLEAR_FACTOR
+            ctx.fall_delay = get_initial_fall_delay(ctx.stage)
+            pygame.time.set_timer(fall_event, ctx.fall_delay)
+            ctx.state = GameState.STAGE_CLEAR
+
+        ctx.current_piece = ctx.next_piece
+        ctx.current_piece.x = GRID_WIDTH // 2
+        ctx.current_piece.y = 1
+        effective_weights: List[int] = [max(w - (ctx.stage - 1), 5) for w in base_shape_weights]
+        ctx.next_piece = ctx.next_next_piece
+        ctx.next_next_piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
+        if not valid_position(ctx.current_piece, ctx.grid):
+            print("Game Over. Final Score:", ctx.score)
+            ctx.state = GameState.GAME_OVER
+
+def render_screen(ctx: GameContext, screen: pygame.Surface) -> None:
+    """
+    Render the game screen.
+    
+    Args:
+        ctx (GameContext): The game context.
+        screen (pygame.Surface): The drawing surface.
+    """
+    screen.fill(BG_COLOR)
+    falling_columns: set[int] = { x for (x, _) in ctx.current_piece.get_block_positions() }
+    draw_grid(screen, ctx.grid, falling_columns)
+    draw_piece(screen, ctx.current_piece)
+    draw_stage_border(screen)
+    draw_previews(screen, ctx.next_piece, ctx.next_next_piece)
+    lines_remaining: int = ctx.stage_threshold - ctx.lines_cleared_stage
+    draw_info(screen, ctx.score, ctx.stage, lines_remaining)
+    if ctx.state == GameState.PAUSED:
+        draw_pause_message(screen)
+    elif ctx.state == GameState.STAGE_CLEAR:
+        draw_pause_message(screen, message=f"Stage {ctx.stage-1} Clear!\nPress any key\nto continue.")
+    elif ctx.state == GameState.GAME_OVER:
+        draw_pause_message(screen, message=f"Game Over.\nFinal Score: {ctx.score}\nPress ESC to exit.")
+    pygame.display.flip()
+
 def main() -> None:
     """
     Main function to run the TRIOS game.
@@ -360,167 +550,20 @@ def main() -> None:
     screen: pygame.Surface = pygame.display.set_mode((WINDOW_WIDTH_EXTENDED, WINDOW_HEIGHT))
     pygame.display.set_caption("TRIOS")
     clock: pygame.time.Clock = pygame.time.Clock()
-
-    grid: List[List[Optional[Tuple[int, int, int]]]] = create_grid()
-
-    # Stage management
-    stage: int = 1
-    stage_threshold: int = stage * STAGE_CLEAR_FACTOR  # e.g., Stage 1: 10 lines, Stage 2: 20 lines, etc.
-    lines_cleared_stage: int = 0  # Lines cleared in the current stage
-
-    # Set initial fall delay based on stage and start fall timer event
-    fall_delay: int = get_initial_fall_delay(stage)
+    
+    # Create a fall event timer ID.
     fall_event: int = pygame.USEREVENT + 1
-    pygame.time.set_timer(fall_event, fall_delay)
-
-    # Score and combo multiplier
-    score: int = 0
-    combo_multiplier: int = 1
-
-    # Generate the first two preview pieces
-    effective_weights: List[int] = [max(w - (stage - 1), 5) for w in base_shape_weights]
-    next_piece: Piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
-    next_next_piece: Piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
-    # Set current piece from next_piece
-    current_piece: Piece = next_piece
-    current_piece.x = GRID_WIDTH // 2
-    current_piece.y = 1
-    # Update preview: next_piece becomes next_next_piece, then generate a new next_next_piece
-    next_piece = next_next_piece
-    next_next_piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
-
-    state: GameState = GameState.RUNNING
-    close_request = False
-    while not close_request:
+    
+    # Initialize game context.
+    ctx = GameContext()
+    pygame.time.set_timer(fall_event, ctx.fall_delay)
+    
+    while not ctx.close_request:
         clock.tick(FPS)
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                close_request = False
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_q or event.key == pygame.K_ESCAPE:
-                    close_request = True
-                    continue
-
-                if state == GameState.GAME_OVER:
-                    continue
-                elif state in [GameState.PAUSED, GameState.STAGE_CLEAR]:
-                    state = GameState.RUNNING
-                    continue
-
-                assert state == GameState.RUNNING
-
-                if event.key == pygame.K_p:
-                    state = GameState.PAUSED
-                    continue
-
-                if event.key == pygame.K_LEFT:
-                    new_positions = [(x - 1, y) for (x, y) in current_piece.get_block_positions()]
-                    if valid_position(current_piece, grid, new_positions):
-                        current_piece.x -= 1
-                elif event.key == pygame.K_RIGHT:
-                    new_positions = [(x + 1, y) for (x, y) in current_piece.get_block_positions()]
-                    if valid_position(current_piece, grid, new_positions):
-                        current_piece.x += 1
-                elif event.key == pygame.K_DOWN:
-                    new_positions = [(x, y + 1) for (x, y) in current_piece.get_block_positions()]
-                    if valid_position(current_piece, grid, new_positions):
-                        current_piece.y += 1
-                elif event.key == pygame.K_UP:
-                    new_blocks = current_piece.rotate()
-                    rotated_positions = [(current_piece.x + bx, current_piece.y + by) for (bx, by) in new_blocks]
-                    if valid_position(current_piece, grid, rotated_positions):
-                        current_piece.apply_rotation(new_blocks)
-                elif event.key == pygame.K_SPACE:
-                    while valid_position(current_piece, grid):
-                        current_piece.y += 1
-                    current_piece.y -= 1
-                    add_piece_to_grid(current_piece, grid)
-                    grid, lines_cleared = clear_full_lines(grid)
-                    if lines_cleared > 0:
-                        score += (lines_cleared ** 2) * combo_multiplier
-                        combo_multiplier *= 2
-                        lines_cleared_stage += lines_cleared
-                    else:
-                        combo_multiplier = 1
-
-                    fall_delay = max(MIN_FALL_DELAY, fall_delay - 2)
-                    pygame.time.set_timer(fall_event, fall_delay)
-
-                    if lines_cleared_stage >= stage_threshold:
-                        grid = create_grid()  # Clear the field
-                        lines_cleared_stage -= stage_threshold
-                        stage += 1
-                        stage_threshold = stage * STAGE_CLEAR_FACTOR
-                        fall_delay = get_initial_fall_delay(stage)
-                        pygame.time.set_timer(fall_event, fall_delay)
-                        state = GameState.STAGE_CLEAR
-
-                    current_piece = next_piece
-                    current_piece.x = GRID_WIDTH // 2
-                    current_piece.y = 1
-                    effective_weights: List[int] = [max(w - (stage - 1), 5) for w in base_shape_weights]
-                    next_piece = next_next_piece
-                    next_next_piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
-                    if not valid_position(current_piece, grid):
-                        print("Game Over. Final Score:", score)
-                        state = GameState.GAME_OVER
-
-            elif event.type == fall_event and state == GameState.RUNNING:
-                new_y = current_piece.y + 1
-                new_positions = [(x, y + 1) for (x, y) in current_piece.get_block_positions()]
-                if valid_position(current_piece, grid, new_positions):
-                    current_piece.y = new_y
-                else:
-                    add_piece_to_grid(current_piece, grid)
-                    grid, lines_cleared = clear_full_lines(grid)
-                    if lines_cleared > 0:
-                        score += (lines_cleared ** 2) * combo_multiplier
-                        combo_multiplier *= 2
-                        lines_cleared_stage += lines_cleared
-                    else:
-                        combo_multiplier = 1
-
-                    fall_delay = max(MIN_FALL_DELAY, fall_delay - 2)
-                    pygame.time.set_timer(fall_event, fall_delay)
-
-                    if lines_cleared_stage >= stage_threshold:
-                        grid = create_grid()  # Clear the field on stage clear
-                        lines_cleared_stage -= stage_threshold
-                        stage += 1
-                        stage_threshold = stage * STAGE_CLEAR_FACTOR
-                        fall_delay = get_initial_fall_delay(stage)
-                        pygame.time.set_timer(fall_event, fall_delay)
-
-                    current_piece = next_piece
-                    current_piece.x = GRID_WIDTH // 2
-                    current_piece.y = 1
-                    effective_weights: List[int] = [max(w - (stage - 1), 5) for w in base_shape_weights]
-                    next_piece = next_next_piece
-                    next_next_piece = Piece(random.choices(shapes, weights=effective_weights, k=1)[0], GRID_WIDTH // 2, 1)
-                    if not valid_position(current_piece, grid):
-                        print("Game Over. Final Score:", score)
-                        state = GameState.GAME_OVER
-
-        screen.fill(BG_COLOR)
-        falling_columns: set[int] = { x for (x, _) in current_piece.get_block_positions() }
-        draw_grid(screen, grid, falling_columns)
-        draw_piece(screen, current_piece)
-        draw_stage_border(screen)
-        draw_previews(screen, next_piece, next_next_piece)
-        lines_remaining = stage_threshold - lines_cleared_stage
-        draw_info(screen, score, stage, lines_remaining)
-        if state == GameState.RUNNING:
-            pass
-        elif state == GameState.PAUSED:
-            draw_pause_message(screen)
-        elif state == GameState.STAGE_CLEAR:
-            draw_pause_message(screen, message=f"Stage {stage-1} Clear!\nPress any key\nto continue.")
-        elif state == GameState.GAME_OVER:
-            draw_pause_message(screen, message=f"Game Over.\nFinal Score: {score}\nPress ESC to exit.")
-        else:
-            assert False
-        pygame.display.flip()
-
+        handle_events(ctx, fall_event)
+        # Note: update_fall is handled in handle_events for fall_event
+        render_screen(ctx, screen)
+    
     pygame.quit()
     sys.exit()
 
